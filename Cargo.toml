@@ -11,6 +11,12 @@ cortex-m-rt = "0.6.10"
 cortex-m-semihosting = "0.3.3"
 panic-halt = "0.2.0"
 
+[dependencies.stm32l0xx-hal]
+version = "0.5.0"
+features = ["stm32l0x3", "rt"]
+optional = true
+
+
 # Uncomment for the panic example.
 # panic-itm = "0.4.1"
 
@@ -23,6 +29,14 @@ panic-halt = "0.2.0"
 # [dependencies.stm32f3]
 # features = ["stm32f303", "rt"]
 # version = "0.7.1"
+
+[features]
+default = []
+qemu = []
+hw = ['stm32l0xx-hal']
+# [target.'cfg(not(qemu))'.dependencies]
+# stm32l0xx-hal = {version = "0.5.0", features = ["stm32l0x3", "rt"]}
+
 
 # this lets you use `cargo fix`!
 [[bin]]
