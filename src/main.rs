@@ -21,7 +21,7 @@ const APP: () = {
 	led: gpioa::PA5<Output<PushPull>>,
     }
     
-    #[init( spawn=[handle_serial])]
+    #[init]
     fn init(cx: init::Context) -> init::LateResources{
 	static mut USB_BUS: Option<bus::UsbBusAllocator<UsbBusType>> = None;
         let mut rcc = cx.device.RCC.freeze(rcc::Config::hsi16());
@@ -58,7 +58,7 @@ const APP: () = {
         }
     }
 
-    #[task(binds = TIM2, resources = [timer,serial,usb_dev], spawn = [toggle_led, handle_serial])]
+    #[task(binds = TIM2, resources = [timer], spawn = [toggle_led] )]
     fn tim2_isr(cx : tim2_isr::Context) {
 	static mut COUNT: u32 = 0;
 	
@@ -72,44 +72,41 @@ const APP: () = {
 	
 	cx.resources.timer.clear_irq();		// clear interrupt flag
 
-	cx.spawn.handle_serial().unwrap();
-
-
-	
     }
 
     
-#[task (resources=[serial, usb_dev])]
-fn handle_serial(c : handle_serial::Context) {
-    if !c.resources.usb_dev.poll(&mut  [ c.resources.serial]) {
-	return
+    #[idle (resources=[serial, usb_dev])]
+    fn idle(c : idle::Context) -> ! {
+	loop {
+	    if !c.resources.usb_dev.poll(&mut  [ c.resources.serial]) {
+		continue;
+	    }
+
+	    let mut buf = [0u8; 64];
+
+	    match c.resources.serial.read(&mut buf) {
+		Ok(count) if count > 0 => {
+		    // Echo back in upper case
+		    for c in buf[0..count].iter_mut() {
+			if 0x61 <= *c && *c <= 0x7a {
+			    *c &= !0x20;
+			}
+		    }
+
+		    let mut write_offset = 0;
+		    while write_offset < count {
+			match c.resources.serial.write(&buf[write_offset..count]) {
+			    Ok(len) if len > 0 => { 
+			       write_offset += len;
+			    }
+			    _ => {}
+			}
+		    }
+		}
+		_ => {}
+	    }	
+	}
     }
-
-        let mut buf = [0u8; 64];
-
-        match c.resources.serial.read(&mut buf) {
-            Ok(count) if count > 0 => {
-                // Echo back in upper case
-                for c in buf[0..count].iter_mut() {
-                    if 0x61 <= *c && *c <= 0x7a {
-                        *c &= !0x20;
-                    }
-                }
-
-                let mut write_offset = 0;
-                while write_offset < count {
-                    match c.resources.serial.write(&buf[write_offset..count]) {
-                        Ok(len) if len > 0 => { 
-                           write_offset += len;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }	
-    }
-
     #[task(resources=[led])] 
     fn toggle_led(cx : toggle_led::Context) {
 	cx.resources.led.toggle().unwrap();	
