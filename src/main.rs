@@ -2,8 +2,9 @@
 #![no_std]
 #![no_main]
 
-extern crate panic_semihosting;
+extern crate panic_halt;
 use rtfm::app;
+use rtfm::{Exclusive, Mutex};
 use stm32l0xx_hal::usb::{USB, UsbBus, UsbBusType};
 use stm32l0xx_hal::{ prelude::*, rcc, syscfg::SYSCFG, timer, gpio::*};
 use usb_device::bus;
@@ -69,7 +70,7 @@ const APP: () = {
 	}
     }
     
-    #[task(binds = TIM2, resources=[timer,], spawn = [toggle_led] )]
+    #[task(binds = TIM2, resources=[timer,serial], spawn = [toggle_led] )]
     fn tim2_isr(cx : tim2_isr::Context) {
 	static mut COUNT: u32 = 0;
 	
@@ -78,7 +79,7 @@ const APP: () = {
 	if *COUNT > 50 {
 	    *COUNT = 0;
 	    cx.spawn.toggle_led().unwrap();
-
+            writeline("hello\r\n", Exclusive(cx.resources.serial));
 	}
 	
 	cx.resources.timer.clear_irq();		// clear interrupt flag
@@ -102,7 +103,7 @@ const APP: () = {
 
     		let mut write_offset = 0;
     		while write_offset < count {
-    		    match cx.resources.serial.write(&buf[write_offset..count]) {
+                   match cx.resources.serial.write(&buf[write_offset..count]) {
     			Ok(len) if len > 0 => { 
     			   write_offset += len;
     			}
@@ -125,4 +126,8 @@ const APP: () = {
     }
     
 };
-
+fn writeline(text : &str, mut port : impl  Mutex<T=SerialPort<'static, UsbBusType >>) {
+    port.lock(|port| {
+        port.write(text.as_bytes()).unwrap_or(0);
+    });
+}
