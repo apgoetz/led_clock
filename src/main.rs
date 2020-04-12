@@ -79,7 +79,7 @@ const APP: () = {
 	if *COUNT > 50 {
 	    *COUNT = 0;
 	    cx.spawn.toggle_led().unwrap();
-            writeline("hello\r\n", Exclusive(cx.resources.serial));
+            dwriteln("in scheduler", Exclusive(cx.resources.serial));
 	}
 	
 	cx.resources.timer.clear_irq();		// clear interrupt flag
@@ -126,8 +126,16 @@ const APP: () = {
     }
     
 };
-fn writeline(text : &str, mut port : impl  Mutex<T=SerialPort<'static, UsbBusType >>) {
+
+// tries to write to the serial port, but silently fails if the buffer is full.
+// used for debugging
+fn dwriteln(text : &str, mut port : impl  Mutex<T=SerialPort<'static, UsbBusType >>) {
+    let text = text.as_bytes();
     port.lock(|port| {
-        port.write(text.as_bytes()).unwrap_or(0);
+	// if we wrote the whole string
+        if port.write(text).unwrap_or(0) == text.len() {
+	    // write a newline afterwards
+	    port.write("\r\n".as_bytes()).unwrap_or(0);
+	}
     });
 }
