@@ -2,7 +2,7 @@
 #![no_std]
 #![no_main]
 
-extern crate panic_halt;
+extern crate panic_semihosting;
 use rtfm::app;
 use stm32l0xx_hal::usb::{USB, UsbBus, UsbBusType};
 use stm32l0xx_hal::{ prelude::*, rcc, syscfg::SYSCFG, timer, gpio::*};
@@ -11,7 +11,6 @@ use usb_device::prelude::*;
 use usbd_serial::{SerialPort, USB_CLASS_CDC};
 
 #[app(device=stm32l0xx_hal::pac, peripherals=true)]
-
 const APP: () = {
 
     struct Resources {
@@ -45,11 +44,9 @@ const APP: () = {
             .device_class(USB_CLASS_CDC)
             .build();
 
-	
 	let mut timer = cx.device.TIM2.timer(100.hz(), &mut rcc);
 	timer.listen();
-	
-	
+
         init::LateResources {
 	    usb_dev,
             serial,
@@ -58,7 +55,21 @@ const APP: () = {
         }
     }
 
-    #[task(binds = TIM2, resources = [timer], spawn = [toggle_led] )]
+    #[idle(resources=[serial,usb_dev], spawn=[handle_serial])]
+    fn idle(mut cx:idle::Context ) -> !
+    {
+	let usb_dev = cx.resources.usb_dev;
+	loop {
+	    let result = cx.resources.serial.lock(|serial| {
+		usb_dev.poll(&mut  [ serial])
+	    });
+	    if result  {
+	    	cx.spawn.handle_serial().unwrap();
+	    }
+	}
+    }
+    
+    #[task(binds = TIM2, resources=[timer,], spawn = [toggle_led] )]
     fn tim2_isr(cx : tim2_isr::Context) {
 	static mut COUNT: u32 = 0;
 	
@@ -66,7 +77,7 @@ const APP: () = {
 
 	if *COUNT > 50 {
 	    *COUNT = 0;
-	    cx.spawn.toggle_led().unwrap()
+	    cx.spawn.toggle_led().unwrap();
 
 	}
 	
@@ -74,39 +85,35 @@ const APP: () = {
 
     }
 
-    
-    #[idle (resources=[serial, usb_dev])]
-    fn idle(c : idle::Context) -> ! {
-	loop {
-	    if !c.resources.usb_dev.poll(&mut  [ c.resources.serial]) {
-		continue;
-	    }
+    #[task (resources=[serial])]
+    fn handle_serial(cx : handle_serial::Context) {
 
-	    let mut buf = [0u8; 64];
+    	let mut buf = [0u8; 64];
 
-	    match c.resources.serial.read(&mut buf) {
-		Ok(count) if count > 0 => {
-		    // Echo back in upper case
-		    for c in buf[0..count].iter_mut() {
-			if 0x61 <= *c && *c <= 0x7a {
-			    *c &= !0x20;
-			}
-		    }
+	
+    	match cx.resources.serial.read(&mut buf) {
+    	    Ok(count) if count > 0 => {
+    		// Echo back in upper case
+    		for c in buf[0..count].iter_mut() {
+    		    if 0x61 <= *c && *c <= 0x7a {
+    			*c &= !0x20;
+    		    }
+    		}
 
-		    let mut write_offset = 0;
-		    while write_offset < count {
-			match c.resources.serial.write(&buf[write_offset..count]) {
-			    Ok(len) if len > 0 => { 
-			       write_offset += len;
-			    }
-			    _ => {}
-			}
-		    }
-		}
-		_ => {}
-	    }	
-	}
+    		let mut write_offset = 0;
+    		while write_offset < count {
+    		    match cx.resources.serial.write(&buf[write_offset..count]) {
+    			Ok(len) if len > 0 => { 
+    			   write_offset += len;
+    			}
+    			_ => {}
+    		    }
+    		}
+    	    }
+    	    _ => {}
+    	}
     }
+
     #[task(resources=[led])] 
     fn toggle_led(cx : toggle_led::Context) {
 	cx.resources.led.toggle().unwrap();	
