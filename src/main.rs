@@ -14,7 +14,7 @@ use usbd_serial::{SerialPort, USB_CLASS_CDC, DefaultBufferStore};
 use core::fmt;
 use core::fmt::Write;
 mod led;
-
+mod blocks;
 // we need to wrap the serialport interface in a newtype in order to
 // use formatting macros with the port.
 //
@@ -180,4 +180,3 @@ const APP: () = {
     }
     
 };
-
