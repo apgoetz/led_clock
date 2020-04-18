@@ -11,7 +11,7 @@ use usb_device::prelude::*;
 use usbd_serial::{SerialPort, USB_CLASS_CDC, DefaultBufferStore};
 use core::fmt;
 use core::fmt::Write;
-
+mod led;
 
 // we need to wrap the serialport interface in a newtype in order to
 // use formatting macros with the port.
@@ -50,10 +50,11 @@ impl<'a, B,R,W> fmt::Write for SerialWrapper <'a, B,R,W> where
 const APP: () = {
 
     struct Resources {
+        led_sm : led::LEDStateMachine,
         usb_dev: UsbDevice<'static, UsbBusType>,
 	serial: SerialWrapper<'static, UsbBusType >,
 	timer: timer::Timer<stm32l0xx_hal::pac::TIM21>,
-	led : pwm::Pwm<stm32l0xx_hal::pac::TIM2, pwm::C1, pwm::Assigned<gpioa::PA5<Analog>>>,
+	led_pin : pwm::Pwm<stm32l0xx_hal::pac::TIM2, pwm::C1, pwm::Assigned<gpioa::PA5<Analog>>>,
         button : gpioa::PA0<Input<Floating>>,//pa0
     }
     
@@ -67,8 +68,8 @@ const APP: () = {
         let gpioa = cx.device.GPIOA.split(&mut rcc);
 
 	let pwm = pwm::Timer::new(cx.device.TIM2, 10.khz(), &mut rcc);
-	let led = pwm.channel1.assign(gpioa.pa5);
-
+	let mut led_pin = pwm.channel1.assign(gpioa.pa5);
+        led_pin.enable();
         let button = gpioa.pa0.into_floating_input();
 	
         let usb = USB::new(cx.device.USB, gpioa.pa11, gpioa.pa12, hsi48);
@@ -88,10 +89,11 @@ const APP: () = {
 	timer.listen();
         
         init::LateResources {
+            led_sm : led::LEDStateMachine::new(),
 	    usb_dev,
             serial,
 	    timer,
-	    led,
+	    led_pin,
             button,
         }
     }
@@ -147,22 +149,20 @@ const APP: () = {
     	}
     }
 
-    #[task(resources=[serial,led, button])] 
+    #[task(resources=[led_sm,led_pin, button,serial])] 
     fn run_led(cx : run_led::Context) {
-        static mut DUTY : u16 = 0;
-        
-        let led = cx.resources.led;
-        let max = led.get_max_duty();
-        let delta =  max / 100;
-
-        *DUTY += delta;
-        
-        if *DUTY > max {
-            *DUTY = 0;
+        let run_led::Resources {led_sm,led_pin,button,serial} = cx.resources;
+        let max = led_pin.get_max_duty() as f32;
+        let but_stat = button.is_high().unwrap();
+        let stepval = led_sm.step(but_stat);
+        let duty = max*stepval;
+        if duty < 0.0 {
+            led_pin.set_duty(0)
+        } else {
+            led_pin.set_duty(duty as u16);
         }
-        
-	led.set_duty(*DUTY);
-        writeln!(cx.resources.serial, "duty: {}\r", *DUTY).ok();
+
+        //writeln!(serial, "stepval: {}\r", stepval).ok();
     }
 
   // Interrupt handlers used to dispatch software tasks
