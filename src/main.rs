@@ -89,8 +89,9 @@ const APP: () = {
             .device_class(USB_CLASS_CDC)
             .build();
 
-	let mut timer = cx.device.TIM21.timer(100.hz(), &mut rcc);
+	let mut timer = cx.device.TIM21.timer(1000.hz(), &mut rcc);
 	timer.listen();
+        
         let txpin = gpiob.pb6;
         let rxpin = gpiob.pb7;
         let uart = cx.device.USART1.usart(txpin, rxpin,serial::Config::default(), &mut rcc).unwrap();
@@ -112,10 +113,15 @@ const APP: () = {
     // this thread must have the highest priority
     #[task(binds = TIM21, resources=[timer], spawn = [run_led] , priority=2)]
     fn scheduler(cx : scheduler::Context) {
+        static mut DIVIDER : u16 = 0;
 
-	cx.spawn.run_led().unwrap();
 	cx.resources.timer.clear_irq();		// clear interrupt flag, so we dont execute continuously
-
+        // kick off tasks at their samplerate
+        if *DIVIDER % led::LEDStateMachine::T == 0 {
+            cx.spawn.run_led().unwrap();
+        }
+        
+        *DIVIDER += 1;
     }
 
     // USB ISR (stm32l0xx only has one interrupt for all the things)
@@ -170,8 +176,8 @@ const APP: () = {
         } else {
             led_pin.set_duty(duty as u16);
         }
-
-        //writeln!(serial, "stepval: {}\r", stepval).ok();
+//        writeln!(cx.resources.uart, "led\r").unwrap();
+        writeln!(serial, "stepval: {}\r", stepval).ok();
     }
 
   // Interrupt handlers used to dispatch software tasks

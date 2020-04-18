@@ -9,13 +9,15 @@ pub struct LEDStateMachine {
 }
 
 impl LEDStateMachine {
+    pub const T: u16 = 10;
     pub fn new () -> LEDStateMachine {
         let b = [ 0.00024136,  0.00048272,  0.00024136];
         let a = [ 1.        , -1.95557824,  0.95654368];
         LEDStateMachine {ledfilter : blocks::BiQuad::new(0.0,
                                                  b ,
-                                                 a),
-                         timer : blocks::Timer32::new(100),
+                                                         a),
+                         // 1 second time
+                         timer : blocks::Timer32::new(1000/LEDStateMachine::T as u32),
                          led_state : LedState::On}
     }
     pub fn step(&mut self, button_is_pressed : bool) -> f32 {
