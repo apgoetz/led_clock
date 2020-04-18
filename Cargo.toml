@@ -11,9 +11,11 @@ panic-halt = "0.2.0"
 usb-device = "0.2.5"
 usbd-serial = "0.1.0"
 cortex-m-rtfm = "0.5.1"
+stm32l0 = "0.10.0"
+
 [dependencies.stm32l0xx-hal]
-version = "0.6.0"
-features = ["stm32l0x3", "rt", "stm32-usbd"]
+version = "0.6.1"
+features = ["stm32l0x3", "rt", "stm32-usbd", "mcu-STM32L053C8Tx"]
 
 # this lets you use `cargo fix`!
 [[bin]]

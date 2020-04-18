@@ -5,7 +5,9 @@
 extern crate panic_halt;
 use rtfm::app;
 use stm32l0xx_hal::usb::{USB, UsbBus, UsbBusType};
-use stm32l0xx_hal::{ prelude::*, rcc, syscfg::SYSCFG, timer, gpio::*, pwm};
+use stm32l0xx_hal::{serial, prelude::*, rcc, syscfg::SYSCFG, timer, gpio::*, pwm};
+use stm32l0xx_hal::serial::Serial1Ext;
+use stm32l0::stm32l0x3;
 use usb_device::bus;
 use usb_device::prelude::*;
 use usbd_serial::{SerialPort, USB_CLASS_CDC, DefaultBufferStore};
@@ -50,6 +52,7 @@ impl<'a, B,R,W> fmt::Write for SerialWrapper <'a, B,R,W> where
 const APP: () = {
 
     struct Resources {
+        uart : serial::Tx<stm32l0x3::USART1>,
         led_sm : led::LEDStateMachine,
         usb_dev: UsbDevice<'static, UsbBusType>,
 	serial: SerialWrapper<'static, UsbBusType >,
@@ -66,6 +69,7 @@ const APP: () = {
         let hsi48 = rcc.enable_hsi48(&mut syscfg, cx.device.CRS);
 
         let gpioa = cx.device.GPIOA.split(&mut rcc);
+        let gpiob = cx.device.GPIOB.split(&mut rcc);
 
 	let pwm = pwm::Timer::new(cx.device.TIM2, 10.khz(), &mut rcc);
 	let mut led_pin = pwm.channel1.assign(gpioa.pa5);
@@ -87,8 +91,13 @@ const APP: () = {
 
 	let mut timer = cx.device.TIM21.timer(100.hz(), &mut rcc);
 	timer.listen();
-        
+        let txpin = gpiob.pb6;
+        let rxpin = gpiob.pb7;
+        let uart = cx.device.USART1.usart(txpin, rxpin,serial::Config::default(), &mut rcc).unwrap();
+        let (mut uart,_) = uart.split();
+        writeln!(uart, "finished init\r").unwrap();
         init::LateResources {
+            uart,
             led_sm : led::LEDStateMachine::new(),
 	    usb_dev,
             serial,
@@ -167,7 +176,7 @@ const APP: () = {
 
   // Interrupt handlers used to dispatch software tasks
     extern "C" {
-        fn USART1();
+        fn USART2();
     }
     
 };
