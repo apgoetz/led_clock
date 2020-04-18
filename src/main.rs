@@ -8,8 +8,7 @@ use stm32l0xx_hal::usb::{USB, UsbBus, UsbBusType};
 use stm32l0xx_hal::{serial, prelude::*, rcc, syscfg::SYSCFG, timer, gpio::*, pwm};
 use stm32l0xx_hal::serial::Serial1Ext;
 use stm32l0::stm32l0x3;
-use usb_device::bus;
-use usb_device::prelude::*;
+use usb_device::{bus,prelude::*, device};
 use usbd_serial::{SerialPort, USB_CLASS_CDC, DefaultBufferStore};
 use core::fmt;
 use core::fmt::Write;
@@ -126,12 +125,24 @@ const APP: () = {
 
     // USB ISR (stm32l0xx only has one interrupt for all the things)
     // must call usb poll in here to handle usb traffic
-    #[task (binds=USB, resources=[serial,usb_dev], spawn=[handle_serial])]
+    #[task (binds=USB, resources=[serial,usb_dev, uart], spawn=[handle_serial])]
     fn usb(cx:usb::Context) {
+        static mut OLDSTATE : Option<device::UsbDeviceState> = None;
 	let usb_dev = cx.resources.usb_dev;
         let spawn = cx.spawn;
         let serial = cx.resources.serial;
 	if usb_dev.poll(&mut  [ &mut serial.0])  {
+            let state = usb_dev.state();
+            if Some(state) != *OLDSTATE {
+                *OLDSTATE = Some(state);
+                writeln!(cx.resources.uart, "{}\r",
+                match state {
+                    usb_device::device::UsbDeviceState::Default => "def",
+                    usb_device::device::UsbDeviceState::Addressed => "addr",
+                    usb_device::device::UsbDeviceState::Configured => "conf",
+                    usb_device::device::UsbDeviceState::Suspend => "susp",
+                }).ok();
+            }
 	    spawn.handle_serial().unwrap();
 	}
     }
