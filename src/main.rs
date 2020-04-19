@@ -14,6 +14,7 @@ use core::fmt;
 use core::fmt::Write;
 mod led;
 mod blocks;
+use crate::blocks::RTTask;
 // we need to wrap the serialport interface in a newtype in order to
 // use formatting macros with the port.
 //
@@ -39,7 +40,6 @@ impl<'a, B,R,W> fmt::Write for SerialWrapper <'a, B,R,W> where
     // number of bytes written, but that is OK for now, since we only
     // intend this write interface to be used for debugging stuff.
     fn write_str(&mut self, s: &str) -> fmt::Result {
-
 	match self.0.write(s.as_bytes()) {
 	    Ok(len) => { if len == s.len() { Ok(()) } else {Err(fmt::Error) } },
 	    _ => Err(fmt::Error)
@@ -116,7 +116,7 @@ const APP: () = {
 
 	cx.resources.timer.clear_irq();		// clear interrupt flag, so we dont execute continuously
         // kick off tasks at their samplerate
-        if *DIVIDER % led::LEDStateMachine::T == 0 {
+        if *DIVIDER % led::LEDStateMachine::CYCLETIME == 0 {
             cx.spawn.run_led().unwrap();
         }
         
@@ -132,19 +132,22 @@ const APP: () = {
         let spawn = cx.spawn;
         let serial = cx.resources.serial;
 	if usb_dev.poll(&mut  [ &mut serial.0])  {
-            let state = usb_dev.state();
-            if Some(state) != *OLDSTATE {
-                *OLDSTATE = Some(state);
-                writeln!(cx.resources.uart, "{}\r",
-                match state {
-                    usb_device::device::UsbDeviceState::Default => "def",
-                    usb_device::device::UsbDeviceState::Addressed => "addr",
-                    usb_device::device::UsbDeviceState::Configured => "conf",
-                    usb_device::device::UsbDeviceState::Suspend => "susp",
-                }).ok();
-            }
 	    spawn.handle_serial().unwrap();
 	}
+        let state = usb_dev.state();
+        if Some(state) != *OLDSTATE {
+            *OLDSTATE = Some(state);
+            writeln!(cx.resources.uart, "{}\r",
+            match state {
+                usb_device::device::UsbDeviceState::Default => "def",
+                usb_device::device::UsbDeviceState::Addressed => "addr",
+                usb_device::device::UsbDeviceState::Configured => "conf",
+                usb_device::device::UsbDeviceState::Suspend => "susp",
+            }).ok();
+
+            // Note: stm32_usb handles FSUSP and LPMOODE if a
+            // suspend/resume event occurs during the poll() call above
+        }
     }
     
     #[task (resources=[serial])]
@@ -175,20 +178,21 @@ const APP: () = {
     	}
     }
 
-    #[task(resources=[led_sm,led_pin, button,serial])] 
+    #[task(resources=[led_sm,led_pin, button,serial, usb_dev, uart])] 
     fn run_led(cx : run_led::Context) {
-        let run_led::Resources {led_sm,led_pin,button,serial} = cx.resources;
+        let run_led::Resources {led_sm,led_pin,button,serial,usb_dev, uart} = cx.resources;
         let max = led_pin.get_max_duty() as f32;
-        let but_stat = button.is_high().unwrap();
-        let stepval = led_sm.step(but_stat);
-        let duty = max*stepval;
+        let button_is_pressed = button.is_high().unwrap();
+        let usbstate = usb_dev.state();
+        let output = led_sm.step(&led::LEDInput{button_is_pressed, usbstate});
+        let duty = max*output.led_level;
         if duty < 0.0 {
             led_pin.set_duty(0)
         } else {
             led_pin.set_duty(duty as u16);
         }
-//        writeln!(cx.resources.uart, "led\r").unwrap();
-        writeln!(serial, "stepval: {}\r", stepval).ok();
+        //writeln!(uart, "{:?}\r", led_sm.led_state).unwrap();
+        writeln!(serial, "stepval: {}\r", output.led_level).ok();
     }
 
   // Interrupt handlers used to dispatch software tasks
