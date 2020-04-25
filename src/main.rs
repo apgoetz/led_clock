@@ -15,6 +15,9 @@ use core::fmt::Write;
 mod led;
 mod blocks;
 use crate::blocks::RTTask;
+
+use stm32l0xx_hal::adc;
+
 // we need to wrap the serialport interface in a newtype in order to
 // use formatting macros with the port.
 //
@@ -51,6 +54,8 @@ impl<'a, B,R,W> fmt::Write for SerialWrapper <'a, B,R,W> where
 const APP: () = {
 
     struct Resources {
+        adc: adc::Adc<adc::Ready>,
+        ain: gpioa::PA4<Analog>,
         uart : serial::Tx<stm32l0x3::USART1>,
         led_sm : led::LEDStateMachine,
         usb_dev: UsbDevice<'static, UsbBusType>,
@@ -79,6 +84,7 @@ const APP: () = {
 
 	*USB_BUS = Some(UsbBus::new(usb));
 
+        
         let serial = SerialWrapper(SerialPort::new(USB_BUS.as_ref().unwrap()));
 
         let usb_dev = UsbDeviceBuilder::new(USB_BUS.as_ref().unwrap(), UsbVidPid(0x1209, 0x0010))
@@ -90,11 +96,22 @@ const APP: () = {
 
 	let mut timer = cx.device.TIM21.timer(1000.hz(), &mut rcc);
 	timer.listen();
+
+        
+
         
         let txpin = gpiob.pb6;
         let rxpin = gpiob.pb7;
         let uart = cx.device.USART1.usart(txpin, rxpin,serial::Config::default(), &mut rcc).unwrap();
         let (mut uart,_) = uart.split();
+
+
+        let adc = cx.device.ADC.constrain(&mut rcc);
+        let ain = gpioa.pa4.into_analog();
+
+        
+
+        
         writeln!(uart, "finished init\r").unwrap();
         init::LateResources {
             uart,
@@ -104,13 +121,15 @@ const APP: () = {
 	    timer,
 	    led_pin,
             button,
+            ain,
+            adc,
         }
     }
 
     // kicks off all of the periodic tasks. If any of them are still
     // running when the interrupt fires again, the spawn call will fail and we panic
     // this thread must have the highest priority
-    #[task(binds = TIM21, resources=[timer], spawn = [run_led] , priority=2)]
+    #[task(binds = TIM21, resources=[timer], spawn = [run_led,run_adc] , priority=2)]
     fn scheduler(cx : scheduler::Context) {
         static mut DIVIDER : u16 = 0;
 
@@ -119,6 +138,10 @@ const APP: () = {
         if *DIVIDER % led::LEDStateMachine::CYCLETIME == 0 {
             cx.spawn.run_led().unwrap();
         }
+        if *DIVIDER % 5 == 0 {
+            cx.spawn.run_adc().unwrap();
+        }
+        
         
         *DIVIDER += 1;
     }
@@ -178,6 +201,14 @@ const APP: () = {
     	}
     }
 
+
+    #[task(resources=[adc,ain,serial])] 
+    fn run_adc(cx : run_adc::Context) {
+        let run_adc::Resources {adc,ain,serial} = cx.resources;
+        let val: u16 = adc.read(ain).unwrap();
+        writeln!(serial, "val: {}\r", val).ok();        
+    }
+    
     #[task(resources=[led_sm,led_pin, button,serial, usb_dev, uart])] 
     fn run_led(cx : run_led::Context) {
         let run_led::Resources {led_sm,led_pin,button,serial,usb_dev, uart} = cx.resources;
@@ -192,7 +223,7 @@ const APP: () = {
             led_pin.set_duty(duty as u16);
         }
         //writeln!(uart, "{:?}\r", led_sm.led_state).unwrap();
-        writeln!(serial, "stepval: {}\r", output.led_level).ok();
+        //writeln!(serial, "stepval: {}\r", output.led_level).ok();
     }
 
   // Interrupt handlers used to dispatch software tasks

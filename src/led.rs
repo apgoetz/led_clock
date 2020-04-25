@@ -33,7 +33,7 @@ impl LEDStateMachine {
                                                  b ,
                                                          a),
                          // 1 second time
-                         timer : blocks::Timer32::new::<Self>(1000),
+                         timer : blocks::Timer32::new::<Self>(7805),
                          led_state : LedState::On}
     }
     
@@ -57,7 +57,7 @@ impl LEDStateMachine {
                     self.led_state = LedState::Off;
                     self.timer.reset()
                 }
-                LEDOutput{led_level:self.ledfilter.step(1.0), go_to_sleep:false}
+                LEDOutput{led_level:self.ledfilter.step(0.25), go_to_sleep:false}
             }
             LedState::Suspend => {
                 if button_is_pressed {
