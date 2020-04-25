@@ -5,5 +5,7 @@ Cargo.lock
 target/
 linker.map
 
+pytest/*.png
+
 # editor files
 *~

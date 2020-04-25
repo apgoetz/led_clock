@@ -1,4 +1,5 @@
-//CDC-ACM serial port example using polling in a busy loop.
+//asdf
+
 #![no_std]
 #![no_main]
 
@@ -12,9 +13,9 @@ use usb_device::{bus,prelude::*, device};
 use usbd_serial::{SerialPort, USB_CLASS_CDC, DefaultBufferStore};
 use core::fmt;
 use core::fmt::Write;
-mod led;
-mod blocks;
-use crate::blocks::RTTask;
+
+use app::blocks::RTTask;
+use app::led;
 
 use stm32l0xx_hal::adc;
 
@@ -90,7 +91,7 @@ const APP: () = {
         let usb_dev = UsbDeviceBuilder::new(USB_BUS.as_ref().unwrap(), UsbVidPid(0x1209, 0x0010))
             .manufacturer("Andy Goetz")
             .product("LED_CLOCKv1")
-            .serial_number("TEST")
+            .serial_number("asdf")
             .device_class(USB_CLASS_CDC)
             .build();
 
