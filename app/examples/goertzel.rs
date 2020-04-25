@@ -10,14 +10,19 @@ fn main() {
 
     let n = args[1].parse::<usize>().unwrap();
     let k = args[2].parse::<u32>().unwrap();
-    let mut buffer = vec![0u16;n];
+    let mut buffer = vec![0f32;n];
     let stdin = io::stdin();
     let mut i = 0;
     for line in  stdin.lock().lines() {
-	buffer[i] = line.unwrap().parse::<u16>().unwrap();
+	let line = line.unwrap();
+	buffer[i] = match line.parse::<u16>() {
+	    Ok(v) => (v as f32) / 4096.0,
+	    Err(_) => line.parse::<f32>().unwrap()
+	};
+	
         i+=1;
         if i == n {
-            println!("{}",goertzel(&buffer,k,12));
+            println!("{}",goertzel(&buffer,k));
             i = 0;
         }
     }

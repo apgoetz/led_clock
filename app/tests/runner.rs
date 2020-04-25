@@ -1,8 +1,10 @@
 use app::goertzel::goertzel;
 
 #[test]
-fn test_dc_values() {
-    let x : [u16;20] = [4096;20];
-    assert_eq!(1.0, goertzel(&x,6,12));
-}
 
+// result of goerzel for pure DC signal is length of DFT 2
+fn test_dc_values() {
+    const N : usize = 20;
+    let x : [f32;N] = [1.0;N];
+    assert_eq!((N*N) as f32, goertzel(&x,0));
+}

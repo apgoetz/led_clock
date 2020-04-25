@@ -16,6 +16,7 @@ use core::fmt::Write;
 
 use app::blocks::RTTask;
 use app::led;
+use app::humbutton::HumButton;
 
 use stm32l0xx_hal::adc;
 
@@ -58,12 +59,12 @@ const APP: () = {
         adc: adc::Adc<adc::Ready>,
         ain: gpioa::PA4<Analog>,
         uart : serial::Tx<stm32l0x3::USART1>,
-        led_sm : led::LEDStateMachine,
         usb_dev: UsbDevice<'static, UsbBusType>,
 	serial: SerialWrapper<'static, UsbBusType >,
 	timer: timer::Timer<stm32l0xx_hal::pac::TIM21>,
 	led_pin : pwm::Pwm<stm32l0xx_hal::pac::TIM2, pwm::C1, pwm::Assigned<gpioa::PA5<Analog>>>,
-        button : gpioa::PA0<Input<Floating>>,//pa0
+        hw_button : gpioa::PA0<Input<Floating>>,
+	button_pressed : bool,
     }
     
     #[init]
@@ -79,7 +80,7 @@ const APP: () = {
 	let pwm = pwm::Timer::new(cx.device.TIM2, 10.khz(), &mut rcc);
 	let mut led_pin = pwm.channel1.assign(gpioa.pa5);
         led_pin.enable();
-        let button = gpioa.pa0.into_floating_input();
+        let hw_button = gpioa.pa0.into_floating_input();
 	
         let usb = USB::new(cx.device.USB, gpioa.pa11, gpioa.pa12, hsi48);
 
@@ -116,14 +117,14 @@ const APP: () = {
         writeln!(uart, "finished init\r").unwrap();
         init::LateResources {
             uart,
-            led_sm : led::LEDStateMachine::new(),
 	    usb_dev,
             serial,
 	    timer,
 	    led_pin,
-            button,
+            hw_button,
             ain,
             adc,
+	    button_pressed : false,
         }
     }
 
@@ -173,7 +174,8 @@ const APP: () = {
             // suspend/resume event occurs during the poll() call above
         }
     }
-    
+
+	
     #[task (resources=[serial])]
     fn handle_serial(cx : handle_serial::Context) {
 
@@ -203,28 +205,41 @@ const APP: () = {
     }
 
 
-    #[task(resources=[adc,ain,serial])] 
+    #[task(resources=[adc,ain,serial,hw_button, button_pressed])] 
     fn run_adc(cx : run_adc::Context) {
-        let run_adc::Resources {adc,ain,serial} = cx.resources;
-        let val: u16 = adc.read(ain).unwrap();
-        writeln!(serial, "val: {}\r", val).ok();        
+	static mut BUTTON : HumButton = HumButton::new();
+
+
+        let run_adc::Resources {adc,ain,serial,hw_button, button_pressed} = cx.resources;
+        let rawval : u16 = adc.read(ain).unwrap();
+	let val = (rawval as f32) / 4096.0;
+
+	*button_pressed = BUTTON.step(&val);
+	*button_pressed |= hw_button.is_high().unwrap(); 
+	
+        writeln!(serial, ": {}\r", rawval).ok();        
     }
     
-    #[task(resources=[led_sm,led_pin, button,serial, usb_dev, uart])] 
+    #[task(resources=[led_pin, button_pressed, usb_dev])] 
     fn run_led(cx : run_led::Context) {
-        let run_led::Resources {led_sm,led_pin,button,serial,usb_dev, uart} = cx.resources;
+	static mut LED_SM : Option<led::LEDStateMachine> = None;
+
+	if let None = *LED_SM {
+	    *LED_SM = Some(led::LEDStateMachine::new());
+	}
+
+	
+        let run_led::Resources {led_pin,button_pressed,usb_dev} = cx.resources;
         let max = led_pin.get_max_duty() as f32;
-        let button_is_pressed = button.is_high().unwrap();
         let usbstate = usb_dev.state();
-        let output = led_sm.step(&led::LEDInput{button_is_pressed, usbstate});
+	let button_pressed = *button_pressed;
+        let output = LED_SM.as_mut().unwrap().step(&led::LEDInput{button_pressed, usbstate});
         let duty = max*output.led_level;
         if duty < 0.0 {
             led_pin.set_duty(0)
         } else {
             led_pin.set_duty(duty as u16);
         }
-        //writeln!(uart, "{:?}\r", led_sm.led_state).unwrap();
-        //writeln!(serial, "stepval: {}\r", output.led_level).ok();
     }
 
   // Interrupt handlers used to dispatch software tasks

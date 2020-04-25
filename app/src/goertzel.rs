@@ -5,7 +5,7 @@
 use libm::{cosf};
 use core::f32::consts::PI;
 
-pub fn goertzel(x: &[u16],k:u32, bits : u8) -> f32
+pub fn goertzel(x: &[f32],k:u32) -> f32
 {
     let n = x.len() as f32;
     let w = 2.0*PI/n*(k as f32);
@@ -13,8 +13,7 @@ pub fn goertzel(x: &[u16],k:u32, bits : u8) -> f32
     let (mut q1,mut q2) = (0f32,0f32);
 
     for &x in x {
-	let x_shifted = (x as f32) / ((1 << bits) as f32);
-	let q0 = coeff*q1-q2+x_shifted;
+	let q0 = coeff*q1-q2+x;
 	q2 = q1;
 	q1 = q0;
     }

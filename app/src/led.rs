@@ -6,7 +6,7 @@ use core::fmt::Debug;
 pub enum LedState {On,Off, Suspend}
 
 pub struct LEDInput {
-    pub button_is_pressed : bool,
+    pub button_pressed : bool,
     pub usbstate : UsbDeviceState    ,
 }
 pub struct LEDOutput {
@@ -33,16 +33,16 @@ impl LEDStateMachine {
                                                  b ,
                                                          a),
                          // 1 second time
-                         timer : blocks::Timer32::new::<Self>(7805),
+                         timer : blocks::Timer32::new::<Self>(3000),
                          led_state : LedState::On}
     }
     
     pub fn step(&mut self, input : &LEDInput) -> LEDOutput {
-        let &LEDInput {button_is_pressed, usbstate} = input;
+        let &LEDInput {button_pressed, usbstate} = input;
         let alarm = self.timer.step();
         match self.led_state {
             LedState::Off => {
-                if button_is_pressed == true {
+                if button_pressed == true {
                     self.led_state = LedState::On;
                     self.timer.reset();
                 } else if alarm && usbstate == UsbDeviceState::Suspend {
@@ -51,7 +51,7 @@ impl LEDStateMachine {
                 LEDOutput{led_level:self.ledfilter.step(0.0), go_to_sleep:false}
             },
             LedState::On => {
-                if button_is_pressed == true {
+                if button_pressed == true {
                     self.timer.reset();
                 } else if alarm {
                     self.led_state = LedState::Off;
@@ -60,7 +60,7 @@ impl LEDStateMachine {
                 LEDOutput{led_level:self.ledfilter.step(0.25), go_to_sleep:false}
             }
             LedState::Suspend => {
-                if button_is_pressed {
+                if button_pressed {
                     self.led_state = LedState::On;
                 }
                 LEDOutput{led_level:self.ledfilter.step(0.0), go_to_sleep:true}
