@@ -3,7 +3,7 @@ import numpy as np
 import scipy.signal as sig
 import matplotlib.pyplot as plt
 import subprocess
-files = ['clock','clock2']
+files = ['press','noise', 'oscillate']
 Fs = 200                        # sampling frequency in Hz
 f_0 = 60                        # target frequency in Hz
 N = 20                          # "bins" in the DFT
@@ -21,6 +21,17 @@ def goertzel(x,k):
         Q2=Q1
         Q1=Q0
     return Q1**2 + Q2**2 -Q1*Q2*coeff
+
+
+# call the rust version of goertzel
+def rs_humbutton(fn):
+    with open(fn, "rb") as f:
+        cmd = "cargo run --example humbutton"
+        output=subprocess.Popen(cmd, shell=True ,stdin=f,text=True,
+                                stdout=subprocess.PIPE)   
+        out, error = output.communicate()
+        return np.fromstring(out,dtype=float,sep="\n")
+
 
 # call the rust version of goertzel
 def rs_goertzel(fn,n=20,k=6):
@@ -66,7 +77,8 @@ for fn in files:
     L = len(x)
     L = L - L%N
     x = x[:L]
-    x = x / (2**12-1)
+
+#    x = x / (2**12-1)
     
     assert int(L/N)==L/N
 
@@ -77,8 +89,9 @@ for fn in files:
 
     y = filter_out(X)
     r_X = rs_goertzel(fn+'.csv', N,k)
+    r_y = rs_humbutton(fn+'.csv')
     fig,ax = plt.subplots(3,1)
     ax[0].plot(x)
-    ax[1].plot(X)
-    ax[2].plot(r_X)
+    ax[1].plot(r_X)
+    ax[2].plot(r_y)
     fig.savefig('{}.png'.format(fn))
