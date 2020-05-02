@@ -1,4 +1,4 @@
-//asdf
+//base software for led clock. Contains all code to talk to hardware
 
 #![no_std]
 #![no_main]
@@ -18,7 +18,16 @@ use app::blocks::RTTask;
 use app::led;
 use app::humbutton::HumButton;
 
+
 use stm32l0xx_hal::adc;
+
+
+use stm32l0xx_hal::i2c;
+use mfxstm32l152::{MFX, NbShunt, DelayUnit};
+use stm32l0xx_hal::delay;
+
+// typealias to save on typing the mfx device object
+type MFXDriver = MFX<i2c::I2c<stm32l0x3::I2C1, gpiob::PB9<Output<OpenDrain>>, gpiob::PB8<Output<OpenDrain>>>, gpioa::PA1<Output<PushPull>>, delay::Delay>;
 
 // we need to wrap the serialport interface in a newtype in order to
 // use formatting macros with the port.
@@ -56,15 +65,31 @@ impl<'a, B,R,W> fmt::Write for SerialWrapper <'a, B,R,W> where
 const APP: () = {
 
     struct Resources {
+
+        // used to read AC hum
         adc: adc::Adc<adc::Ready>,
+        // io pin for  reading AC hum
         ain: gpioa::PA4<Analog>,
+        // uart for debugging
         uart : serial::Tx<stm32l0x3::USART1>,
+        // usb device for handing usb port
         usb_dev: UsbDevice<'static, UsbBusType>,
+        // CDC-ACM object for debugging
 	serial: SerialWrapper<'static, UsbBusType >,
+        // hardware timer used to schedule RT tasks (1kHz)
 	timer: timer::Timer<stm32l0xx_hal::pac::TIM21>,
+        // io pin for LED control (pwm pin)
 	led_pin : pwm::Pwm<stm32l0xx_hal::pac::TIM2, pwm::C1, pwm::Assigned<gpioa::PA5<Analog>>>,
+        // io pin for hardware ui button
         hw_button : gpioa::PA0<Input<Floating>>,
+
+        // global state to indicate if button is pressed (used to
+        // communicate between hum button driver and main code
 	button_pressed : bool,
+
+        // driver for multifunction expander
+        mfx : MFXDriver,
+        
     }
     
     #[init]
@@ -96,8 +121,8 @@ const APP: () = {
             .device_class(USB_CLASS_CDC)
             .build();
 
-	let mut timer = cx.device.TIM21.timer(1000.hz(), &mut rcc);
-	timer.listen();
+	let timer = cx.device.TIM21.timer(1000.hz(), &mut rcc);
+	//timer.listen();
 
         
 
@@ -111,8 +136,14 @@ const APP: () = {
         let adc = cx.device.ADC.constrain(&mut rcc);
         let ain = gpioa.pa4.into_analog();
 
+        let sda = gpiob.pb9.into_open_drain_output();
+        let scl = gpiob.pb8.into_open_drain_output();
+        let i2c = cx.device.I2C1.i2c(sda, scl, 150.khz(), &mut rcc);
+        let wakeup  = gpioa.pa1.into_push_pull_output();
+//        let wakeup = OldOutputPin::new(wakeup); // convert into old-style pin
+        let delay = delay::Delay::new(cx.core.SYST, rcc.clocks);
+        let mfx = MFX::new(i2c, wakeup, delay, 0x42).unwrap();
         
-
         
         writeln!(uart, "finished init\r").unwrap();
         init::LateResources {
@@ -125,13 +156,56 @@ const APP: () = {
             ain,
             adc,
 	    button_pressed : false,
+            mfx,
         }
     }
 
+
+    #[idle(resources=[mfx,uart])]
+    fn idle(cx : idle::Context ) -> ! {
+    	let idle::Resources {mut mfx,mut uart} = cx.resources;
+
+        loop {
+	match mfx.wakup() {
+	    Err(e) => {
+		uart.lock(|s| {writeln!(s, "wakeup error {:?}\r",e).ok()});
+ 	    }
+	    _ => break
+	};
+        }
+    	 uart.lock(|s| {
+    	     writeln!(s, "finished mfx setup\r").ok();
+    	    });
+
+	uart.lock(|s| {
+	    writeln!(s, "errcode {:?}\r",mfx.error_code()).ok();
+	    writeln!(s, "fw_ver {:?}\r",mfx.firmware_version()).ok();
+	});
+
+
+        
+	setup_mfx(&mut mfx);	
+    	loop {
+    	    uart.lock(|s| {
+    		writeln!(s, "starting idd meas:\r").ok();
+    	    });
+    	    mfx.idd_start().unwrap();
+
+            mfx.wait_for_measurement().ok();
+            
+    	    let idd = mfx.idd_get_value().unwrap();
+    	    let error = mfx.error_code().unwrap();
+    	    uart.lock(|s| {
+    		writeln!(s, "IDD: {} nA, Error: {}\r", idd,error).ok();
+    	    });
+    	}
+    }
+    
+    
     // kicks off all of the periodic tasks. If any of them are still
     // running when the interrupt fires again, the spawn call will fail and we panic
-    // this thread must have the highest priority
-    #[task(binds = TIM21, resources=[timer], spawn = [run_led,run_adc] , priority=2)]
+    // this thread must have the highest priority, because it implements SW watchdog
+    #[task(binds = TIM21, resources=[timer], spawn = [run_led,run_adc], priority=2)]
     fn scheduler(cx : scheduler::Context) {
         static mut DIVIDER : u16 = 0;
 
@@ -150,15 +224,15 @@ const APP: () = {
 
     // USB ISR (stm32l0xx only has one interrupt for all the things)
     // must call usb poll in here to handle usb traffic
-    #[task (binds=USB, resources=[serial,usb_dev, uart], spawn=[handle_serial])]
+    #[task (binds=USB, resources=[serial,usb_dev, uart])]
     fn usb(cx:usb::Context) {
         static mut OLDSTATE : Option<device::UsbDeviceState> = None;
 	let usb_dev = cx.resources.usb_dev;
-        let spawn = cx.spawn;
         let serial = cx.resources.serial;
-	if usb_dev.poll(&mut  [ &mut serial.0])  {
-	    spawn.handle_serial().unwrap();
-	}
+
+	// do the polling of the USB state
+	usb_dev.poll(&mut  [ &mut serial.0]);
+	
         let state = usb_dev.state();
         if Some(state) != *OLDSTATE {
             *OLDSTATE = Some(state);
@@ -174,36 +248,6 @@ const APP: () = {
             // suspend/resume event occurs during the poll() call above
         }
     }
-
-	
-    #[task (resources=[serial])]
-    fn handle_serial(cx : handle_serial::Context) {
-
-    	let mut buf = [0u8; 64];
-        let serial = cx.resources.serial;
-    	match serial.0.read(&mut buf) {
-    	    Ok(count) if count > 0 => {
-    		// Echo back in upper case
-    		for c in buf[0..count].iter_mut() {
-    		    if 0x61 <= *c && *c <= 0x7a {
-    			*c &= !0x20;
-    		    }
-    		}
-
-    		let mut write_offset = 0;
-    		while write_offset < count {
-                   match serial.0.write(&buf[write_offset..count]) {
-    			Ok(len) if len > 0 => { 
-    			   write_offset += len;
-    			}
-    			_ => {}
-    		    }
-    		}
-    	    }
-    	    _ => {}
-    	}
-    }
-
 
     #[task(resources=[adc,ain,serial,hw_button, button_pressed])] 
     fn run_adc(cx : run_adc::Context) {
@@ -248,3 +292,19 @@ const APP: () = {
     }
     
 };
+
+
+// helper function to wrap setting up of the MFX device
+fn setup_mfx( mfx : &mut MFXDriver) {
+    mfx.set_idd_ctrl(false, false, NbShunt::SHUNT_NB_4).unwrap();
+    mfx.set_idd_gain(4990).unwrap();    // gain is 4990
+    mfx.set_idd_vdd_min(2000).unwrap(); // In milivolt
+    mfx.set_idd_pre_delay(DelayUnit::TIME_20_MS, 1).unwrap(); // 20ms delay
+    mfx.set_idd_shunt0(1000, 149).unwrap();
+    mfx.set_idd_shunt1(24, 149).unwrap();
+    mfx.set_idd_shunt2(620, 149).unwrap();
+    mfx.set_idd_shunt3(0, 0).unwrap();
+    mfx.set_idd_shunt4(10000, 255).unwrap();
+    mfx.set_idd_nb_measurment(1).unwrap(); // number of measurements to take 
+    mfx.set_idd_meas_delta_delay(DelayUnit::TIME_5_MS, 1).unwrap(); // delay 5ms between samples
+}

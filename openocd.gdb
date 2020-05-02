@@ -1,4 +1,4 @@
-target extended-remote :3333
+target extended-remote :4242
 
 # print demangled symbols
 set print asm-demangle on
@@ -17,9 +17,9 @@ set backtrace limit 32
 # end
 
 # *try* to stop at the user entry point (it might be gone due to inlining)
-break main
+#break main
 
-monitor arm semihosting enable
+#monitor arm semihosting enable
 
 # # send captured ITM to the file itm.fifo
 # # (the microcontroller SWO pin must be connected to the programmer SWO pin)
@@ -34,7 +34,7 @@ monitor arm semihosting enable
 # # enable ITM port 0
 # monitor itm port 0 on
 
-load
+#load
 
 # start the process but immediately halt the processor
-stepi
+#stepi
