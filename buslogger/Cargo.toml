@@ -1,0 +1,9 @@
+[package]
+authors = ["agoetz"]
+edition = "2018"
+readme = "README.md"
+name = "buslogger"
+version = "0.1.0"
+
+[dependencies]
+embedded-hal = "0.2.3"

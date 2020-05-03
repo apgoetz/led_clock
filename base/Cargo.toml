@@ -13,6 +13,7 @@ usbd-serial = "0.1.0"
 cortex-m-rtfm = "0.5.1"
 stm32l0 = "0.10.0"
 app = { path = "../app"}
+buslogger = { path = "../buslogger"}
 mfxstm32l152 = "0.0.1"
 embedded-hal = "0.2.3"
 

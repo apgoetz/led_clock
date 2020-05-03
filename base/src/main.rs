@@ -17,7 +17,7 @@ use core::fmt::Write;
 use app::blocks::RTTask;
 use app::led;
 use app::humbutton::HumButton;
-
+use buslogger::BusLogger;
 
 use stm32l0xx_hal::adc;
 
@@ -27,7 +27,7 @@ use mfxstm32l152::{MFX, NbShunt, DelayUnit};
 use stm32l0xx_hal::delay;
 
 // typealias to save on typing the mfx device object
-type MFXDriver = MFX<i2c::I2c<stm32l0x3::I2C1, gpiob::PB9<Output<OpenDrain>>, gpiob::PB8<Output<OpenDrain>>>, gpioa::PA1<Output<PushPull>>, delay::Delay>;
+type MFXDriver = MFX<buslogger::BusLogger<stm32l0xx_hal::serial::Tx<stm32l0::stm32l0x3::USART1>,i2c::I2c<stm32l0x3::I2C1, gpiob::PB9<Output<OpenDrain>>, gpiob::PB8<Output<OpenDrain>>>>, gpioa::PA1<Output<PushPull>>, delay::Delay>;
 
 // we need to wrap the serialport interface in a newtype in order to
 // use formatting macros with the port.
@@ -71,7 +71,7 @@ const APP: () = {
         // io pin for  reading AC hum
         ain: gpioa::PA4<Analog>,
         // uart for debugging
-        uart : serial::Tx<stm32l0x3::USART1>,
+        //uart : serial::Tx<stm32l0x3::USART1>,
         // usb device for handing usb port
         usb_dev: UsbDevice<'static, UsbBusType>,
         // CDC-ACM object for debugging
@@ -138,16 +138,22 @@ const APP: () = {
 
         let sda = gpiob.pb9.into_open_drain_output();
         let scl = gpiob.pb8.into_open_drain_output();
-        let i2c = cx.device.I2C1.i2c(sda, scl, 150.khz(), &mut rcc);
+        let i2c = cx.device.I2C1.i2c(sda, scl, 100.khz(), &mut rcc);
+	// log info from uart
+
+	writeln!(uart, "\r\rinit\r\r").unwrap();
+	let i2c = BusLogger::new(uart,i2c);
+
         let wakeup  = gpioa.pa1.into_push_pull_output();
 //        let wakeup = OldOutputPin::new(wakeup); // convert into old-style pin
-        let delay = delay::Delay::new(cx.core.SYST, rcc.clocks);
+        let mut delay = delay::Delay::new(cx.core.SYST, rcc.clocks);
+	delay.delay(1000.us());
         let mfx = MFX::new(i2c, wakeup, delay, 0x42).unwrap();
         
         
-        writeln!(uart, "finished init\r").unwrap();
+
         init::LateResources {
-            uart,
+            //uart,
 	    usb_dev,
             serial,
 	    timer,
@@ -161,46 +167,39 @@ const APP: () = {
     }
 
 
-    #[idle(resources=[mfx,uart])]
+    #[idle(resources=[mfx,serial])]
     fn idle(cx : idle::Context ) -> ! {
-    	let idle::Resources {mut mfx,mut uart} = cx.resources;
+    	let idle::Resources {mut mfx,mut serial} = cx.resources;
 
-        loop {
-	match mfx.wakup() {
-	    Err(e) => {
-		uart.lock(|s| {writeln!(s, "wakeup error {:?}\r",e).ok()});
- 	    }
-	    _ => break
-	};
-        }
-    	 uart.lock(|s| {
-    	     writeln!(s, "finished mfx setup\r").ok();
-    	    });
-
-	uart.lock(|s| {
-	    writeln!(s, "errcode {:?}\r",mfx.error_code()).ok();
-	    writeln!(s, "fw_ver {:?}\r",mfx.firmware_version()).ok();
-	});
+	loop {
+	    loop {
+		if mfx.wakup().is_ok() { break} 
+	    }
 
 
-        
-	setup_mfx(&mut mfx);	
-    	loop {
-    	    uart.lock(|s| {
-    		writeln!(s, "starting idd meas:\r").ok();
-    	    });
-    	    mfx.idd_start().unwrap();
+	    setup_mfx(&mut mfx);	
 
-            mfx.wait_for_measurement().ok();
-            
-    	    let idd = mfx.idd_get_value().unwrap();
-    	    let error = mfx.error_code().unwrap();
-    	    uart.lock(|s| {
-    		writeln!(s, "IDD: {} nA, Error: {}\r", idd,error).ok();
-    	    });
-    	}
-    }
-    
+	    loop {
+		mfx.set_idd_ctrl(false, false, NbShunt::SHUNT_NB_4).unwrap();
+		mfx.idd_start().unwrap();
+
+		mfx.wait_for_measurement().ok();
+		let error = mfx.idd_error().unwrap();
+		if error {
+		    serial.lock(|s| {
+			writeln!(s, "idd_err occured\r").ok();
+		    });
+		    break
+		}
+		let idd = mfx.idd_get_value().unwrap();
+		mfx.ack_idd().unwrap();
+		serial.lock(|s| {
+		    writeln!(s, "meas {} nA\r", error).ok();
+		});
+
+	    }
+	}
+    }    
     
     // kicks off all of the periodic tasks. If any of them are still
     // running when the interrupt fires again, the spawn call will fail and we panic
@@ -224,7 +223,7 @@ const APP: () = {
 
     // USB ISR (stm32l0xx only has one interrupt for all the things)
     // must call usb poll in here to handle usb traffic
-    #[task (binds=USB, resources=[serial,usb_dev, uart])]
+    #[task (binds=USB, resources=[serial,usb_dev])]
     fn usb(cx:usb::Context) {
         static mut OLDSTATE : Option<device::UsbDeviceState> = None;
 	let usb_dev = cx.resources.usb_dev;
@@ -236,13 +235,6 @@ const APP: () = {
         let state = usb_dev.state();
         if Some(state) != *OLDSTATE {
             *OLDSTATE = Some(state);
-            writeln!(cx.resources.uart, "{}\r",
-            match state {
-                usb_device::device::UsbDeviceState::Default => "def",
-                usb_device::device::UsbDeviceState::Addressed => "addr",
-                usb_device::device::UsbDeviceState::Configured => "conf",
-                usb_device::device::UsbDeviceState::Suspend => "susp",
-            }).ok();
 
             // Note: stm32_usb handles FSUSP and LPMOODE if a
             // suspend/resume event occurs during the poll() call above
@@ -261,7 +253,7 @@ const APP: () = {
 	*button_pressed = BUTTON.step(&val);
 	*button_pressed |= hw_button.is_high().unwrap(); 
 	
-        writeln!(serial, ": {}\r", rawval).ok();        
+        //writeln!(serial, ": {}\r", rawval).ok();        
     }
     
     #[task(resources=[led_pin, button_pressed, usb_dev])] 
@@ -299,12 +291,12 @@ fn setup_mfx( mfx : &mut MFXDriver) {
     mfx.set_idd_ctrl(false, false, NbShunt::SHUNT_NB_4).unwrap();
     mfx.set_idd_gain(4990).unwrap();    // gain is 4990
     mfx.set_idd_vdd_min(2000).unwrap(); // In milivolt
-    mfx.set_idd_pre_delay(DelayUnit::TIME_20_MS, 1).unwrap(); // 20ms delay
+    mfx.set_idd_pre_delay(DelayUnit::TIME_20_MS, 200).unwrap(); // 20ms delay
     mfx.set_idd_shunt0(1000, 149).unwrap();
     mfx.set_idd_shunt1(24, 149).unwrap();
     mfx.set_idd_shunt2(620, 149).unwrap();
     mfx.set_idd_shunt3(0, 0).unwrap();
     mfx.set_idd_shunt4(10000, 255).unwrap();
-    mfx.set_idd_nb_measurment(1).unwrap(); // number of measurements to take 
-    mfx.set_idd_meas_delta_delay(DelayUnit::TIME_5_MS, 1).unwrap(); // delay 5ms between samples
+    mfx.set_idd_nb_measurment(1).unwrap(); // number of measurements to take
+    mfx.set_idd_meas_delta_delay(DelayUnit::TIME_5_MS, 10).unwrap(); // delay 5ms between samples
 }
