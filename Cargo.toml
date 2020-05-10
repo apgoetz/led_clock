@@ -7,7 +7,7 @@ members = [
 
 [patch.crates-io]
 mfxstm32l152 = { path = '../mfxstm32l152' }
-#stm32l0xx-hal = { path = '../stm32l0xx-hal' }
+stm32l0xx-hal = { path = '../stm32l0xx-hal' }
 
 
 

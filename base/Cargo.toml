@@ -18,7 +18,7 @@ mfxstm32l152 = "0.0.1"
 embedded-hal = "0.2.3"
 
 [dependencies.stm32l0xx-hal]
-version = "0.6.1"
+version = "0.6.2"
 features = ["stm32l0x3", "rt", "stm32-usbd", "mcu-STM32L053C8Tx"]
 
 

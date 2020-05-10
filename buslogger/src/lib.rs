@@ -6,6 +6,8 @@ use core::fmt;
 
 use embedded_hal::blocking::i2c;
 
+//mod flog;
+
 /// A wrapper around an embedded_hal bus peripheral that traces each
 /// read and write call and prints the raw bytes that were sent or
 /// received. It will also pretty-print the error result if the
@@ -13,8 +15,6 @@ use embedded_hal::blocking::i2c;
 ///
 /// Currently, this requires that the error type of the underlying peripheral
 /// implements std::fmt::Debug, which most of them seem to do. 
-
-
 
 pub struct BusLogger<W : fmt::Write,T> (
     W, T

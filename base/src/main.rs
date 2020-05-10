@@ -121,15 +121,17 @@ const APP: () = {
             .device_class(USB_CLASS_CDC)
             .build();
 
-	let timer = cx.device.TIM21.timer(1000.hz(), &mut rcc);
-	//timer.listen();
+	let mut timer = cx.device.TIM21.timer(1000.hz(), &mut rcc);
+	timer.listen();
 
         
 
         
         let txpin = gpiob.pb6;
         let rxpin = gpiob.pb7;
-        let uart = cx.device.USART1.usart(txpin, rxpin,serial::Config::default(), &mut rcc).unwrap();
+	let mut cfg = serial::Config::default();
+	cfg.baudrate = 115200.bps();
+        let uart = cx.device.USART1.usart(txpin, rxpin,cfg, &mut rcc).unwrap();
         let (mut uart,_) = uart.split();
 
 
@@ -194,7 +196,7 @@ const APP: () = {
 		let idd = mfx.idd_get_value().unwrap();
 		mfx.ack_idd().unwrap();
 		serial.lock(|s| {
-		    writeln!(s, "meas {} nA\r", error).ok();
+		    writeln!(s, "meas {} nA\r", idd).ok();
 		});
 
 	    }
@@ -223,14 +225,16 @@ const APP: () = {
 
     // USB ISR (stm32l0xx only has one interrupt for all the things)
     // must call usb poll in here to handle usb traffic
-    #[task (binds=USB, resources=[serial,usb_dev])]
+    #[task (binds=USB, resources=[serial,usb_dev], spawn=[handle_serial])]
     fn usb(cx:usb::Context) {
         static mut OLDSTATE : Option<device::UsbDeviceState> = None;
 	let usb_dev = cx.resources.usb_dev;
         let serial = cx.resources.serial;
 
 	// do the polling of the USB state
-	usb_dev.poll(&mut  [ &mut serial.0]);
+	if usb_dev.poll(&mut  [ &mut serial.0]) {
+	    cx.spawn.handle_serial().unwrap();
+	}
 	
         let state = usb_dev.state();
         if Some(state) != *OLDSTATE {
@@ -241,6 +245,33 @@ const APP: () = {
         }
     }
 
+    #[task (resources=[serial])]
+    fn handle_serial(cx : handle_serial::Context) {
+    	let mut buf = [0u8; 64];
+        let serial = cx.resources.serial;
+    	match serial.0.read(&mut buf) {
+    	    Ok(count) if count > 0 => {
+    		// Echo back in upper case
+    		for c in buf[0..count].iter_mut() {
+    		    if 0x61 <= *c && *c <= 0x7a {
+    			*c &= !0x20;
+    		    }
+    		}
+
+    		let mut write_offset = 0;
+    		while write_offset < count {
+                   match serial.0.write(&buf[write_offset..count]) {
+    			Ok(len) if len > 0 => { 
+    			   write_offset += len;
+    			}
+    			_ => {}
+    		    }
+    		}
+    	    }
+    	    _ => {}
+    	}
+    }
+    
     #[task(resources=[adc,ain,serial,hw_button, button_pressed])] 
     fn run_adc(cx : run_adc::Context) {
 	static mut BUTTON : HumButton = HumButton::new();
@@ -253,7 +284,7 @@ const APP: () = {
 	*button_pressed = BUTTON.step(&val);
 	*button_pressed |= hw_button.is_high().unwrap(); 
 	
-        //writeln!(serial, ": {}\r", rawval).ok();        
+//        writeln!(serial, ": {}\r", rawval).ok();        
     }
     
     #[task(resources=[led_pin, button_pressed, usb_dev])] 
@@ -291,12 +322,12 @@ fn setup_mfx( mfx : &mut MFXDriver) {
     mfx.set_idd_ctrl(false, false, NbShunt::SHUNT_NB_4).unwrap();
     mfx.set_idd_gain(4990).unwrap();    // gain is 4990
     mfx.set_idd_vdd_min(2000).unwrap(); // In milivolt
-    mfx.set_idd_pre_delay(DelayUnit::TIME_20_MS, 200).unwrap(); // 20ms delay
+    mfx.set_idd_pre_delay(DelayUnit::TIME_20_MS, 1).unwrap(); // 20ms delay
     mfx.set_idd_shunt0(1000, 149).unwrap();
     mfx.set_idd_shunt1(24, 149).unwrap();
     mfx.set_idd_shunt2(620, 149).unwrap();
     mfx.set_idd_shunt3(0, 0).unwrap();
     mfx.set_idd_shunt4(10000, 255).unwrap();
     mfx.set_idd_nb_measurment(1).unwrap(); // number of measurements to take
-    mfx.set_idd_meas_delta_delay(DelayUnit::TIME_5_MS, 10).unwrap(); // delay 5ms between samples
+    mfx.set_idd_meas_delta_delay(DelayUnit::TIME_5_MS, 1).unwrap(); // delay 5ms between samples
 }
